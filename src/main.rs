@@ -1,4 +1,4 @@
-mod rope;
+pub mod rope;
 
 fn main() {
     println!("Hello, world!");
