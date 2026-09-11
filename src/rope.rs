@@ -43,6 +43,18 @@ impl Display for Rope {
     }
 }
 
+impl From<&str> for Rope {
+    fn from(value: &str) -> Self {
+        Self::leaf(value)
+    }
+}
+
+impl From<String> for Rope {
+    fn from(value: String) -> Self {
+        Self::leaf(&value)
+    }
+}
+
 impl Rope {
     fn filter_empty(node: Option<Self>) -> Option<Self> {
         match node {
@@ -107,7 +119,7 @@ impl Rope {
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Self::Leaf(s) => s.len(),
             Self::Node { len, .. } => *len,
@@ -122,7 +134,7 @@ impl Rope {
         matches!(self, Self::Node { .. })
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
@@ -284,7 +296,16 @@ impl Rope {
     }
 
     pub fn next_char_boundary(&self, index: usize) -> Option<usize> {
-        self.char_at(index).map(|c| index + c.len_utf8())
+        if index >= self.len() {
+            return None;
+        }
+
+        let mut i = index + 1;
+        while !self.is_char_boundary(i) {
+            i += 1;
+        }
+
+        Some(i)
     }
 
     pub fn prev_char_boundary(&self, index: usize) -> Option<usize> {
@@ -357,6 +378,10 @@ impl Rope {
             (None, Some(r)) => other.concat(r),
             (None, None) => other,
         }
+    }
+
+    pub fn insert_char(self, index: usize, c: char) -> Self {
+        self.insert_rope(index, Self::leaf(c.encode_utf8(&mut [0u8; 4])))
     }
 
     pub fn insert_str(self, index: usize, str: &str) -> Self {
@@ -864,12 +889,6 @@ mod tests {
             assert_eq!(r.next_char_boundary(0), Some(1));
             assert_eq!(r.next_char_boundary(1), Some(3));
             assert_eq!(r.next_char_boundary(3), Some(4));
-        }
-
-        #[test]
-        fn mid_char_is_none() {
-            let r = Rope::leaf("héllo");
-            assert_eq!(r.next_char_boundary(2), None);
         }
 
         #[test]

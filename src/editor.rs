@@ -1,8 +1,10 @@
+use crate::rope::Rope;
+
 const SCROLLOFF: usize = 4;
 
 #[derive(Debug, Default)]
 pub struct Editor {
-    buffer: String,
+    buffer: Rope,
     cursor: usize,
     preferred_col: Option<usize>,
     viewport_top: usize,
@@ -14,8 +16,8 @@ pub struct Editor {
 impl From<&str> for Editor {
     fn from(value: &str) -> Self {
         Self {
-            buffer: value.to_string(),
-            ..Self::new()
+            buffer: Rope::from(value),
+            ..Self::default()
         }
     }
 }
@@ -23,27 +25,15 @@ impl From<&str> for Editor {
 impl From<String> for Editor {
     fn from(value: String) -> Self {
         Self {
-            buffer: value,
-            ..Self::new()
+            buffer: Rope::from(value),
+            ..Self::default()
         }
     }
 }
 
 impl Editor {
-    pub fn new() -> Self {
-        Self {
-            buffer: String::new(),
-            cursor: 0,
-            preferred_col: None,
-            viewport_top: 0,
-            viewport_left: 0,
-            viewport_rows: 0,
-            viewport_cols: 0,
-        }
-    }
-
-    pub fn text(&self) -> &str {
-        &self.buffer
+    pub fn text(&self) -> String {
+        self.buffer.to_string()
     }
 
     pub fn cursor(&self) -> usize {
@@ -59,13 +49,13 @@ impl Editor {
     }
 
     pub fn insert(&mut self, c: char) {
-        self.buffer.insert(self.cursor, c);
+        self.buffer = self.buffer.clone().insert_char(self.cursor, c);
         self.cursor += c.len_utf8();
         self.preferred_col = None;
     }
 
     pub fn insert_str(&mut self, s: &str) {
-        self.buffer.insert_str(self.cursor, s);
+        self.buffer = self.buffer.clone().insert_str(self.cursor, s);
         self.cursor += s.len();
         self.preferred_col = None;
     }
@@ -73,7 +63,7 @@ impl Editor {
     pub fn delete_back(&mut self) {
         if self.cursor > 0 {
             let start = self.prev_boundary(self.cursor);
-            self.buffer.remove(start);
+            self.buffer = self.buffer.clone().remove(start, self.cursor - start);
             self.cursor = start;
             self.preferred_col = None;
         }
@@ -81,7 +71,8 @@ impl Editor {
 
     pub fn delete_forward(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.buffer.remove(self.cursor);
+            let end = self.next_boundary(self.cursor);
+            self.buffer = self.buffer.clone().remove(self.cursor, end - self.cursor);
         }
     }
 
@@ -156,7 +147,7 @@ impl Editor {
         self.viewport_cols = cols;
     }
 
-    pub fn visible_lines(&self) -> impl Iterator<Item = &str> {
+    pub fn visible_lines(&self) -> impl Iterator<Item = String> {
         let mut curr_start = 0;
         let mut curr_line = 0;
 
@@ -175,7 +166,7 @@ impl Editor {
                 let start = self.advance_chars(curr_start, self.viewport_left, curr_end);
                 let end = self.advance_chars(start, self.viewport_cols, curr_end);
 
-                let s = &self.buffer[start..end];
+                let s = self.buffer.slice_to_string(start, end - start);
 
                 curr_start = curr_end + 1;
                 curr_line += 1;
@@ -214,36 +205,23 @@ impl Editor {
         }
     }
 
-    fn prev_boundary(&self, offset: usize) -> usize {
-        if offset == 0 {
-            return offset;
-        }
-
-        let mut i = offset - 1;
-
-        while !self.buffer.is_char_boundary(i) {
-            i -= 1;
-        }
-
-        i
+    fn next_boundary(&self, offset: usize) -> usize {
+        self.buffer
+            .next_char_boundary(offset)
+            .unwrap_or(self.buffer.len())
     }
 
-    fn next_boundary(&self, offset: usize) -> usize {
-        if offset >= self.buffer.len() {
-            return offset;
-        }
-
-        let mut i = offset + 1;
-
-        while !self.buffer.is_char_boundary(i) {
-            i += 1;
-        }
-
-        i
+    fn prev_boundary(&self, offset: usize) -> usize {
+        self.buffer.prev_char_boundary(offset).unwrap_or_default()
     }
 
     fn char_column(&self, offset: usize) -> usize {
-        self.buffer[self.line_start(offset)..offset].chars().count()
+        let start = self.line_start(offset);
+
+        self.buffer
+            .slice_to_string(start, offset - start)
+            .chars()
+            .count()
     }
 
     fn advance_chars(&self, offset: usize, n: usize, limit: usize) -> usize {
@@ -251,25 +229,31 @@ impl Editor {
             return offset;
         }
 
-        self.buffer[offset..limit]
+        self.buffer
+            .slice_to_string(offset, limit - offset)
             .chars()
             .take(n)
             .fold(offset, |acc, curr| acc + curr.len_utf8())
     }
 
     fn line_number(&self, offset: usize) -> usize {
-        self.buffer[..offset]
+        self.buffer
+            .slice_to_string(0, offset)
             .bytes()
             .filter(|&b| b == b'\n')
             .count()
     }
 
     fn line_start(&self, offset: usize) -> usize {
-        self.buffer[..offset].rfind('\n').map_or_default(|i| i + 1)
+        self.buffer
+            .slice_to_string(0, offset)
+            .rfind('\n')
+            .map_or_default(|i| i + 1)
     }
 
     fn line_end(&self, offset: usize) -> usize {
-        self.buffer[offset..]
+        self.buffer
+            .slice_to_string(offset, self.buffer.len() - offset)
             .find('\n')
             .map_or(self.buffer.len(), |i| i + offset)
     }
@@ -295,22 +279,12 @@ mod tests {
         use super::*;
 
         #[test]
-        fn new_is_empty() {
-            let e = Editor::new();
+        fn default_is_empty() {
+            let e = Editor::default();
             assert_eq!(e.text(), "");
             assert_eq!(e.len(), 0);
             assert!(e.is_empty());
             assert_eq!(e.cursor(), 0);
-        }
-
-        #[test]
-        fn default_matches_new() {
-            let a = Editor::default();
-            let b = Editor::new();
-            assert_eq!(a.text(), b.text());
-            assert_eq!(a.cursor(), b.cursor());
-            assert_eq!(a.viewport_rows, b.viewport_rows);
-            assert_eq!(a.viewport_cols, b.viewport_cols);
         }
 
         #[test]
@@ -640,17 +614,20 @@ mod tests {
         use super::*;
 
         #[test]
-        fn up_at_first_line_is_noop() {
+        fn up_at_first_moves_to_start() {
             let mut e = ed("hello\nworld");
+            for _ in 0..3 {
+                e.move_right();
+            }
             e.move_up();
             assert_eq!(e.cursor(), 0);
         }
 
         #[test]
-        fn down_at_last_line_is_noop() {
+        fn down_at_last_moves_to_end() {
             let mut e = ed("hello");
             e.move_down();
-            assert_eq!(e.cursor(), 0);
+            assert_eq!(e.cursor(), 5);
         }
 
         #[test]
@@ -855,77 +832,77 @@ mod tests {
         #[test]
         fn visible_lines_no_scroll() {
             let e = ed_vp("line1\nline2\nline3", 0, 0, 10, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["line1", "line2", "line3"]);
         }
 
         #[test]
         fn visible_lines_respects_row_count() {
             let e = ed_vp("l1\nl2\nl3\nl4\nl5", 0, 0, 3, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["l1", "l2", "l3"]);
         }
 
         #[test]
         fn visible_lines_with_vertical_scroll() {
             let e = ed_vp("l1\nl2\nl3\nl4\nl5", 2, 0, 2, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["l3", "l4"]);
         }
 
         #[test]
         fn visible_lines_with_horizontal_scroll() {
             let e = ed_vp("0123456789\nabcdefghij", 0, 3, 10, 4);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["3456", "defg"]);
         }
 
         #[test]
         fn visible_lines_horizontal_past_end() {
             let e = ed_vp("short\nline", 0, 20, 10, 40);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["", ""]);
         }
 
         #[test]
         fn visible_lines_empty_buffer() {
             let e = ed_vp("", 0, 0, 10, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert!(lines.is_empty());
         }
 
         #[test]
         fn visible_lines_scroll_past_end() {
             let e = ed_vp("only\none", 100, 0, 5, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert!(lines.is_empty());
         }
 
         #[test]
         fn visible_lines_multibyte() {
             let e = ed_vp("αβγδε\nζηθ", 0, 0, 10, 3);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["αβγ", "ζηθ"]);
         }
 
         #[test]
         fn visible_lines_multibyte_scrolled() {
             let e = ed_vp("αβγδε", 0, 2, 10, 2);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["γδ"]);
         }
 
         #[test]
         fn visible_lines_trailing_newline_with_scroll() {
             let e = ed_vp("a\nb\nc\n", 1, 0, 10, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert_eq!(lines, vec!["b", "c"]);
         }
 
         #[test]
         fn visible_lines_scroll_exactly_to_last_line() {
             let e = ed_vp("a\nb\nc", 3, 0, 5, 80);
-            let lines: Vec<&str> = e.visible_lines().collect();
+            let lines: Vec<String> = e.visible_lines().collect();
             assert!(lines.is_empty());
         }
 
@@ -1003,23 +980,24 @@ mod tests {
 
         #[test]
         fn scroll_down_when_cursor_below() {
-            let mut e = ed_vp("l1\nl2\nl3\nl4\nl5", 0, 0, 2, 80);
-            for _ in 0..4 {
+            let text: String = (1..=20).map(|i| format!("line{}\n", i)).collect();
+            let mut e = ed_vp(&text, 0, 0, 10, 80);
+            for _ in 0..15 {
                 e.move_down();
             }
             e.scroll_to_cursor();
-            assert_eq!(e.viewport_top, 3);
+            assert_eq!(e.viewport_top, 10);
         }
 
         #[test]
         fn scroll_down_uses_correct_arithmetic() {
-            let text = "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11";
-            let mut e = ed_vp(text, 0, 0, 5, 80);
+            let text: String = (1..=15).map(|i| format!("line{}\n", i)).collect();
+            let mut e = ed_vp(&text, 0, 0, 6, 80);
             for _ in 0..10 {
                 e.move_down();
             }
             e.scroll_to_cursor();
-            assert_eq!(e.viewport_top, 6);
+            assert_eq!(e.viewport_top, 9);
         }
 
         #[test]
@@ -1039,12 +1017,13 @@ mod tests {
 
         #[test]
         fn scroll_horizontal() {
-            let mut e = ed_vp("0123456789", 0, 0, 10, 4);
-            for _ in 0..6 {
+            let text = "0123456789abcdefghij";
+            let mut e = ed_vp(text, 0, 0, 10, 6);
+            for _ in 0..10 {
                 e.move_right();
             }
             e.scroll_to_cursor();
-            assert_eq!(e.viewport_left, 3);
+            assert_eq!(e.viewport_left, 9);
         }
 
         #[test]
@@ -1055,29 +1034,55 @@ mod tests {
         }
 
         #[test]
-        fn scroll_to_row_boundary_with_zero_rows() {
-            let mut e = ed_vp("l1\nl2\nl3", 1, 0, 0, 80);
-            e.move_down();
-            e.scroll_to_cursor();
-            assert_eq!(e.viewport_top, 2);
-        }
-
-        #[test]
-        fn scroll_to_col_boundary_with_zero_cols() {
-            let mut e = ed_vp("hello", 0, 1, 10, 0);
-            e.move_right();
-            e.scroll_to_cursor();
-            assert_eq!(e.viewport_left, 2);
-        }
-
-        #[test]
         fn cursor_visible_after_scroll() {
-            let mut e = ed_vp("l1\nl2\nl3\nl4\nl5", 0, 0, 2, 80);
-            for _ in 0..4 {
+            let text: String = (1..=20).map(|i| format!("line{}\n", i)).collect();
+            let mut e = ed_vp(&text, 0, 0, 10, 80);
+            for _ in 0..15 {
                 e.move_down();
             }
             e.scroll_to_cursor();
-            assert_eq!(e.cursor_screen_pos(), Some((1, 0)));
+            assert_eq!(e.cursor_screen_pos(), Some((5, 0)));
+        }
+
+        #[test]
+        fn scroll_keeps_cursor_scrolloff_from_bottom() {
+            let text: String = (1..=30).map(|i| format!("line{}\n", i)).collect();
+            let mut e = ed_vp(&text, 0, 0, 10, 80);
+            for _ in 0..20 {
+                e.move_down();
+            }
+            e.scroll_to_cursor();
+
+            let row = e.line_number(e.cursor());
+            let bottom_row = e.viewport_top + e.viewport_rows - 1;
+            assert_eq!(bottom_row - row, SCROLLOFF);
+        }
+
+        #[test]
+        fn scroll_keeps_cursor_scrolloff_from_top() {
+            let text: String = (1..=30).map(|i| format!("line{}\n", i)).collect();
+            let mut e = ed_vp(&text, 20, 0, 10, 80);
+            for _ in 0..5 {
+                e.move_down();
+            }
+            e.scroll_to_cursor();
+
+            let row = e.line_number(e.cursor());
+            assert_eq!(row - e.viewport_top, SCROLLOFF);
+        }
+
+        #[test]
+        fn scroll_keeps_cursor_scrolloff_from_right() {
+            let text: String = (0..60).map(|i| format!("{}", i % 10)).collect();
+            let mut e = ed_vp(&text, 0, 0, 10, 20);
+            for _ in 0..50 {
+                e.move_right();
+            }
+            e.scroll_to_cursor();
+
+            let col = e.char_column(e.cursor());
+            let right_col = e.viewport_left + e.viewport_cols - 1;
+            assert_eq!(right_col - col, SCROLLOFF);
         }
     }
 

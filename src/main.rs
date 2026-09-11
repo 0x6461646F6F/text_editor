@@ -1,5 +1,6 @@
 mod editor;
 mod render;
+mod rope;
 mod terminal;
 
 use std::io;
