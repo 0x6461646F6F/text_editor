@@ -1,3 +1,5 @@
+const SCROLLOFF: usize = 4;
+
 #[derive(Debug, Default)]
 pub struct Editor {
     buffer: String,
@@ -107,6 +109,7 @@ impl Editor {
         let start = self.line_start(self.cursor);
 
         if start == 0 {
+            self.cursor = start;
             return;
         }
 
@@ -129,6 +132,7 @@ impl Editor {
         let end = self.line_end(self.cursor);
 
         if end == self.buffer.len() {
+            self.cursor = end;
             return;
         }
 
@@ -197,16 +201,16 @@ impl Editor {
         let row = self.line_number(self.cursor);
         let col = self.char_column(self.cursor);
 
-        if row < self.viewport_top {
-            self.viewport_top = row;
-        } else if row >= self.viewport_top + self.viewport_rows {
-            self.viewport_top = row - self.viewport_rows + 1;
+        if row.saturating_sub(SCROLLOFF) < self.viewport_top {
+            self.viewport_top = row.saturating_sub(SCROLLOFF);
+        } else if row.saturating_add(SCROLLOFF) >= self.viewport_top + self.viewport_rows {
+            self.viewport_top = row.saturating_add(SCROLLOFF) - self.viewport_rows + 1;
         }
 
-        if col < self.viewport_left {
-            self.viewport_left = col;
-        } else if col >= self.viewport_left + self.viewport_cols {
-            self.viewport_left = col - self.viewport_cols + 1;
+        if col.saturating_sub(SCROLLOFF) < self.viewport_left {
+            self.viewport_left = col.saturating_sub(SCROLLOFF);
+        } else if col.saturating_add(SCROLLOFF) >= self.viewport_left + self.viewport_cols {
+            self.viewport_left = col.saturating_add(SCROLLOFF) - self.viewport_cols + 1;
         }
     }
 
