@@ -1,55 +1,40 @@
+mod app;
+mod cli;
 mod editor;
-mod render;
 mod rope;
-mod terminal;
+mod prompt;
+mod message;
 
-use std::io;
+use std::{path::PathBuf, process::ExitCode};
 
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    terminal as term,
-};
-
-use editor::Editor;
-use terminal::Terminal;
-
-fn main() -> io::Result<()> {
-    let _term = Terminal::enter()?;
-
-    let (cols, rows) = term::size()?;
-    let mut editor = Editor::from("hello\nworld\nthis is a test");
-    editor.set_viewport((rows as usize).saturating_sub(1), cols as usize);
-
-    run(&mut editor)
+fn main() -> ExitCode {
+    match cli::parse() {
+        Ok(cmd) => run_command(cmd),
+        Err(e) => report_cli_error(e),
+    }
 }
 
-fn run(editor: &mut Editor) -> io::Result<()> {
-    loop {
-        render::draw(editor)?;
+fn run_command(cmd: cli::Command) -> ExitCode {
+    match cmd {
+        cli::Command::Help => {
+            cli::print_help();
+            ExitCode::SUCCESS
+        }
+        cli::Command::Edit(path) => run_editor(path),
+    }
+}
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-
-            match key.code {
-                KeyCode::Esc => break,
-                KeyCode::Char(c) => editor.insert(c),
-                KeyCode::Enter => editor.insert('\n'),
-                KeyCode::Tab => editor.insert_str("    "),
-                KeyCode::Backspace => editor.delete_back(),
-                KeyCode::Delete => editor.delete_forward(),
-                KeyCode::Left => editor.move_left(),
-                KeyCode::Right => editor.move_right(),
-                KeyCode::Up => editor.move_up(),
-                KeyCode::Down => editor.move_down(),
-                KeyCode::Home => editor.move_home(),
-                KeyCode::End => editor.move_end(),
-                _ => {}
-            }
-
-            editor.scroll_to_cursor();
+fn run_editor(path: Option<PathBuf>) -> ExitCode {
+    match app::App::new(path.as_deref()).run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
         }
     }
-    Ok(())
+}
+
+fn report_cli_error(e: cli::ParseError) -> ExitCode {
+    cli::report_error(e);
+    ExitCode::from(2)
 }

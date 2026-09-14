@@ -56,15 +56,149 @@ impl From<String> for Rope {
 }
 
 impl Rope {
+    pub fn leaf(s: &str) -> Self {
+        Self::Leaf(Rc::from(s))
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Leaf(s) => s.len(),
+            Self::Node { len, .. } => *len,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn insert_rope(self, index: usize, other: Rope) -> Self {
+        if other.is_empty() {
+            return self;
+        }
+
+        let start = index.min(self.len());
+        let (left_tree, right_tree) = self.split(start);
+
+        match (left_tree, right_tree) {
+            (Some(l), Some(r)) => l.concat(other).concat(r),
+            (Some(l), None) => l.concat(other),
+            (None, Some(r)) => other.concat(r),
+            (None, None) => other,
+        }
+    }
+
+    pub fn insert_char(self, index: usize, c: char) -> Self {
+        self.insert_rope(index, Self::leaf(c.encode_utf8(&mut [0u8; 4])))
+    }
+
+    pub fn insert_str(self, index: usize, str: &str) -> Self {
+        self.insert_rope(index, Self::leaf(str))
+    }
+
+    pub fn remove(self, index: usize, len: usize) -> Self {
+        let start = index.min(self.len());
+        let end = start.saturating_add(len).min(self.len());
+
+        if start >= end {
+            return self;
+        }
+
+        let (lhs_l, lhs_r) = self.split(start);
+        let rhs_r = lhs_r.and_then(|n| n.split(end - start).1);
+
+        match (lhs_l, rhs_r) {
+            (Some(l), Some(r)) => l.concat(r),
+            (Some(l), None) => l,
+            (None, Some(r)) => r,
+            (None, None) => Self::default(),
+        }
+    }
+
+    pub fn slice_to_string(&self, index: usize, len: usize) -> String {
+        self.slice(index, len).leaves_str().collect()
+    }
+
+    pub fn char_at(&self, index: usize) -> Option<char> {
+        match self {
+            Self::Leaf(s) => s.get(index..)?.chars().next(),
+            Self::Node {
+                left,
+                right,
+                weight,
+                ..
+            } => {
+                if index < *weight {
+                    left.as_deref()
+                        .expect("index < weight implies that left is Some")
+                        .char_at(index)
+                } else {
+                    right.as_deref()?.char_at(index - weight)
+                }
+            }
+        }
+    }
+
+    pub fn byte_at(&self, index: usize) -> Option<u8> {
+        match self {
+            Self::Leaf(s) => s.as_bytes().get(index).copied(),
+            Self::Node {
+                left,
+                right,
+                weight,
+                ..
+            } => {
+                if index < *weight {
+                    left.as_deref()
+                        .expect("index < weight implies that left is Some")
+                        .byte_at(index)
+                } else {
+                    right.as_deref()?.byte_at(index - weight)
+                }
+            }
+        }
+    }
+
+    pub fn is_whitespace(&self, index: usize) -> bool {
+        let byte = self.byte_at(index);
+
+        if let Some(b) = byte {
+            b.is_ascii_whitespace()
+        } else {
+            false
+        }
+    }
+
+    pub fn next_char_boundary(&self, index: usize) -> Option<usize> {
+        if index >= self.len() {
+            return None;
+        }
+
+        let mut i = index + 1;
+        while !self.is_char_boundary(i) {
+            i += 1;
+        }
+
+        Some(i)
+    }
+
+    pub fn prev_char_boundary(&self, index: usize) -> Option<usize> {
+        if index == 0 {
+            return None;
+        }
+
+        let mut i = index.min(self.len()).saturating_sub(1);
+        while !self.is_char_boundary(i) {
+            i -= 1;
+        }
+
+        Some(i)
+    }
+
     fn filter_empty(node: Option<Self>) -> Option<Self> {
         match node {
             Some(Self::Leaf(s)) if s.is_empty() => None,
             other => other,
         }
-    }
-
-    pub fn leaf(s: &str) -> Self {
-        Self::Leaf(Rc::from(s))
     }
 
     fn node(left: Option<Self>, right: Option<Self>) -> Self {
@@ -119,23 +253,12 @@ impl Rope {
         }
     }
 
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Leaf(s) => s.len(),
-            Self::Node { len, .. } => *len,
-        }
-    }
-
     fn is_leaf(&self) -> bool {
         matches!(self, Self::Leaf(_))
     }
 
     fn is_node(&self) -> bool {
         matches!(self, Self::Node { .. })
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 
     fn is_balanced(&self) -> bool {
@@ -243,46 +366,6 @@ impl Rope {
         }
     }
 
-    fn char_at(&self, index: usize) -> Option<char> {
-        match self {
-            Self::Leaf(s) => s.get(index..)?.chars().next(),
-            Self::Node {
-                left,
-                right,
-                weight,
-                ..
-            } => {
-                if index < *weight {
-                    left.as_deref()
-                        .expect("index < weight implies that left is Some")
-                        .char_at(index)
-                } else {
-                    right.as_deref()?.char_at(index - weight)
-                }
-            }
-        }
-    }
-
-    fn byte_at(&self, index: usize) -> Option<u8> {
-        match self {
-            Self::Leaf(s) => s.as_bytes().get(index).copied(),
-            Self::Node {
-                left,
-                right,
-                weight,
-                ..
-            } => {
-                if index < *weight {
-                    left.as_deref()
-                        .expect("index < weight implies that left is Some")
-                        .byte_at(index)
-                } else {
-                    right.as_deref()?.byte_at(index - weight)
-                }
-            }
-        }
-    }
-
     fn is_char_boundary(&self, index: usize) -> bool {
         if index == 0 || index == self.len() {
             return true;
@@ -293,32 +376,6 @@ impl Rope {
         }
 
         matches!(self.byte_at(index), Some(b) if (b & 0b1100_0000) != 0b1000_0000)
-    }
-
-    pub fn next_char_boundary(&self, index: usize) -> Option<usize> {
-        if index >= self.len() {
-            return None;
-        }
-
-        let mut i = index + 1;
-        while !self.is_char_boundary(i) {
-            i += 1;
-        }
-
-        Some(i)
-    }
-
-    pub fn prev_char_boundary(&self, index: usize) -> Option<usize> {
-        if index == 0 {
-            return None;
-        }
-
-        let mut i = index.min(self.len()).saturating_sub(1);
-        while !self.is_char_boundary(i) {
-            i -= 1;
-        }
-
-        Some(i)
     }
 
     fn split(self, index: usize) -> (Option<Self>, Option<Self>) {
@@ -364,50 +421,7 @@ impl Rope {
         }
     }
 
-    pub fn insert_rope(self, index: usize, other: Rope) -> Self {
-        if other.is_empty() {
-            return self;
-        }
-
-        let start = index.min(self.len());
-        let (left_tree, right_tree) = self.split(start);
-
-        match (left_tree, right_tree) {
-            (Some(l), Some(r)) => l.concat(other).concat(r),
-            (Some(l), None) => l.concat(other),
-            (None, Some(r)) => other.concat(r),
-            (None, None) => other,
-        }
-    }
-
-    pub fn insert_char(self, index: usize, c: char) -> Self {
-        self.insert_rope(index, Self::leaf(c.encode_utf8(&mut [0u8; 4])))
-    }
-
-    pub fn insert_str(self, index: usize, str: &str) -> Self {
-        self.insert_rope(index, Self::leaf(str))
-    }
-
-    pub fn remove(self, index: usize, len: usize) -> Self {
-        let start = index.min(self.len());
-        let end = start.saturating_add(len).min(self.len());
-
-        if start >= end {
-            return self;
-        }
-
-        let (lhs_l, lhs_r) = self.split(start);
-        let rhs_r = lhs_r.and_then(|n| n.split(end - start).1);
-
-        match (lhs_l, rhs_r) {
-            (Some(l), Some(r)) => l.concat(r),
-            (Some(l), None) => l,
-            (None, Some(r)) => r,
-            (None, None) => Self::default(),
-        }
-    }
-
-    pub fn slice(&self, index: usize, len: usize) -> Self {
+    fn slice(&self, index: usize, len: usize) -> Self {
         let start = index.min(self.len());
         let end = start.saturating_add(len).min(self.len());
 
@@ -444,10 +458,6 @@ impl Rope {
                 }
             }
         }
-    }
-
-    pub fn slice_to_string(&self, index: usize, len: usize) -> String {
-        self.slice(index, len).leaves_str().collect()
     }
 }
 
